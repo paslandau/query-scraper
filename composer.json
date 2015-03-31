@@ -1,7 +1,7 @@
 {
     "name": "paslandau/query-scraper",
     "license": "MIT",
-    "description" : "Library to ease the scraping of websites for information.",
+    "description" : "Library to ease the scraping of websites.",
     "authors": [
         {
             "name": "Pascal Landau",

@@ -12,14 +12,14 @@
     ],
 	"autoload": {
 	    "psr-4": {
-	        "paslandau\\KeywordSuggest\\": "src/"
+	        "paslandau\\QueryScraper\\": "src/"
 	    }
 	},
     "repositories": [ { "type": "composer", "url": "http://packages.myseosolution.de/"} ],
     "minimum-stability": "dev",
     "require" : {
         "php": "~5.5",
-        "guzzlehttp/guzzle": "~5",
+        "guzzlehttp/guzzle": "~5.0.3",
         "paslandau/web-utility": "dev-master"
     },
     "require-dev": {

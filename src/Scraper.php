@@ -7,15 +7,21 @@ use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Event\AbstractTransferEvent;
 use GuzzleHttp\Event\EndEvent;
 use GuzzleHttp\Event\ErrorEvent;
-use GuzzleHttp\Message\ResponseInterface;
+use GuzzleHttp\Message\RequestInterface;
 use GuzzleHttp\Pool;
 use paslandau\GuzzleRotatingProxySubscriber\Exceptions\NoProxiesLeftException;
+use paslandau\GuzzleRotatingProxySubscriber\Proxy\RotatingProxyInterface;
 use paslandau\QueryScraper\Exceptions\QueryScraperException;
+use paslandau\QueryScraper\Logging\LoggerTrait;
 use paslandau\QueryScraper\Requests\QueryRequestInterface;
-use paslandau\QueryScraper\Results\QueryResult;
+use paslandau\QueryScraper\Results\ProxyFeedbackInterface;
+use paslandau\QueryScraper\Results\Result;
+use paslandau\QueryScraper\Results\RetryableResultInterface;
 
 class Scraper
 {
+    use LoggerTrait;
+
     const GUZZLE_REQUEST_ID_KEY = "query_suggest_request_id";
     const GUZZLE_REQUEST_RETRIES = "query_suggest_request_retries";
 
@@ -40,6 +46,11 @@ class Scraper
     private $error;
 
     /**
+     * @var \ArrayIterator
+     */
+    private $requestGenerator;
+
+    /**
      * @param ClientInterface $client
      * @param int $parallel . [optional]. Default: 5.
      * @param int $maxRetries . [optional]. Default: 3.
@@ -56,11 +67,12 @@ class Scraper
         }
         $this->maxRetries = $maxRetries;
         $this->error = null;
+        $this->requestGenerator = new \ArrayIterator();
     }
 
     /**
      * @param QueryRequestInterface[] $queryRequests
-     * @return QueryResult[]
+     * @return Result[]
      */
     public function scrapeQuerys(array $queryRequests)
     {
@@ -70,20 +82,15 @@ class Scraper
         // prepare requests
         $requests = [];
         foreach ($queryRequests as $key => $queryRequest) {
-            $req = $queryRequest->createRequest($this->client);
-            $req->getConfig()->set(self::GUZZLE_REQUEST_ID_KEY, $key);
-            $req->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, 0);
+            $req = $this->createRequest($queryRequest,$key);
             $requests[$key] = $req;
-            $result[$key] = new QueryResult($queryRequest, [], new QueryScraperException("Request has not been executed!"));
+            $this->requestGenerator->append($req);
+            $result[$key] = new Result($queryRequest, null, new QueryScraperException("Request has not been executed!"));
         }
 
-        $complete = $this->getOnComplete();
+        $end = $this->getOnEnd($result, $queryRequests);
 
-        $error = $this->getOnError();
-
-        $end = $this->getOnEnd($complete, $error, $result, $queryRequests);
-
-        $pool = new Pool($this->client, $requests,
+        $pool = new Pool($this->client, $this->requestGenerator,
             [
                 "pool_size" => $this->parallel,
                 "complete" => $end,
@@ -105,46 +112,25 @@ class Scraper
     }
 
     /**
-     * @return callable
+     * @param QueryRequestInterface $queryRequest
+     * @param int $key
+     * @return RequestInterface
      */
-    public function getOnComplete()
-    {
-        $complete = function (QueryRequestInterface $request, ResponseInterface $response) {
-            $suggests = [];
-            $exception = null;
-            try {
-                $suggests = $request->getResult($response);
-            } catch (\Exception $e) {
-                $exception = $e;
-            }
-            $queryResult = new QueryResult($request, $suggests, $exception);
-            return $queryResult;
-        };
-        return $complete;
+    private function createRequest(QueryRequestInterface $queryRequest, $key){
+        $req = $queryRequest->createRequest($this->client);
+        $req->getConfig()->set(self::GUZZLE_REQUEST_ID_KEY, $key);
+        $req->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, 0);
+        return $req;
     }
 
     /**
-     * @return callable
-     */
-    public function getOnError()
-    {
-        $error = function (QueryRequestInterface $request, \Exception $exception) {
-            $queryResult = new QueryResult($request, null, $exception);
-            return $queryResult;
-        };
-        return $error;
-    }
-
-    /**
-     * @param callable $complete
-     * @param callable $error
      * @param array $result
      * @param array $queryRequests
      * @return callable
      */
-    public function getOnEnd(callable $complete, callable $error, array &$result, array &$queryRequests)
+    public function getOnEnd(array &$result, array &$queryRequests)
     {
-        $end = function (AbstractTransferEvent $event) use ($complete, $error, &$result, &$queryRequests) {
+        $end = function (AbstractTransferEvent $event) use (&$result, &$queryRequests) {
 //            echo "In querySuggestEnd filter, " . $event->getRequest()->getConfig()->get(QueryScraperScraper::GUZZLE_REQUEST_ID_KEY) . "\n";
             $request = $event->getRequest();
             $response = $event->getResponse();
@@ -153,24 +139,34 @@ class Scraper
                 $exception = $event->getException();
             }
             $requestId = $request->getConfig()->get(self::GUZZLE_REQUEST_ID_KEY);
+            /** @var QueryRequestInterface $queryRequest */
             $queryRequest = $queryRequests[$requestId];
-            if ($exception === null) {
-                $queryResult = $complete($queryRequest, $response);
-            } else {
-                $queryResult = $error($queryRequest, $exception);
+            $queryResult = $queryRequest->getResult($request, $response, $exception);
+
+            //proxy feedback
+            if ($queryResult instanceof ProxyFeedbackInterface) {
+                $proxyResult = $queryResult->getProxyResult();
+                $this->getLogger()->debug("[Request: $requestId] Proxy-Feedback for {$request->getConfig()->get("proxy")} {$request->getUrl()}: {$proxyResult}");
+                $request->getConfig()->set(RotatingProxyInterface::GUZZLE_CONFIG_KEY_REQUEST_RESULT,$proxyResult);
             }
-            /** @var QueryResult $queryResult */
-            if ($queryResult->getException() !== null) {
-//                echo $queryResult->getException()->getMessage() . "\n";
+
+            //retry
+            if ($queryResult instanceof RetryableResultInterface && $queryResult->shouldRetry()) {
+
                 $curRetries = $request->getConfig()->get(self::GUZZLE_REQUEST_RETRIES);
+                // NOTE: We cannot use $event->retry(); because it will retry the exact URL that was in the last request.
+                // This becomes a problem when we're dealing with redirects, e.g. while Google SERP scraping.
+                // Google will redirect to a https://ipv4.google.com/sorry/IndexRedirect... page and the retry will retry that URL - which makes no sense
+                // To solve this, we re-generate the original request
+                $req = $this->createRequest($queryRequest,$requestId);
                 if ($curRetries < $this->maxRetries) {
+                    $this->getLogger()->debug("[Request: $requestId] Retrying {$req->getUrl()}... ({$curRetries}/{$this->maxRetries})");
                     $curRetries++;
-//                    echo "Retring $requestId ($curRetries)\n";
-                    $request->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, $curRetries);
-                    $event->retry();
+                    $req->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, $curRetries);
+                    $this->requestGenerator->append($req);
                     return;
                 }
-//                echo "Exceeded retries for $requestId ($curRetries)\n";
+                $this->getLogger()->debug("Giving up on {$req->getUrl()} after {$curRetries} retries");
             }
             $result[$requestId] = $queryResult;
         };

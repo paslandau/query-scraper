@@ -5,7 +5,8 @@ namespace paslandau\QueryScraper\Results;
 
 use paslandau\QueryScraper\Requests\QueryRequestInterface;
 
-interface QueryResultInterface {
+interface ResultInterface
+{
 
     /**
      * @return \Exception|null
@@ -13,29 +14,13 @@ interface QueryResultInterface {
     public function getException();
 
     /**
-     * @param \Exception|null $exception
-     */
-    public function setException($exception);
-
-    /**
      * @return QueryRequestInterface
      */
     public function getRequest();
 
     /**
-     * @param QueryRequestInterface $request
-     */
-    public function setRequest($request);
-
-    /**
+     * Override the return value in implementing classes!
      * @return mixed
      */
     public function getResult();
-
-    /**
-     * @param null|mixed $result
-     */
-    public function setResult($result);
-
-
-} 
+}

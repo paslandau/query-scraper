@@ -3,6 +3,8 @@
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Message\RequestInterface;
 use GuzzleHttp\Message\ResponseInterface;
+use paslandau\QueryScraper\Results\QueryResultInterface;
+use paslandau\QueryScraper\Results\ResultInterface;
 
 interface QueryRequestInterface
 {
@@ -13,8 +15,10 @@ interface QueryRequestInterface
     public function createRequest(ClientInterface $client);
 
     /**
+     * @param RequestInterface $request
      * @param ResponseInterface $resp
-     * @return mixed
+     * @param \Exception $exception
+     * @return \paslandau\QueryScraper\Results\ResultInterface
      */
-    public function getResult(ResponseInterface $resp);
+    public function getResult(RequestInterface $request, ResponseInterface $resp = null, \Exception $exception = null);
 }

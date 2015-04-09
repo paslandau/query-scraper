@@ -5,7 +5,8 @@ namespace paslandau\QueryScraper\Results;
 
 use paslandau\QueryScraper\Requests\QueryRequestInterface;
 
-class QueryResult implements QueryResultInterface {
+class Result implements ResultInterface
+{
     /**
      * @var QueryRequestInterface
      */
@@ -24,7 +25,7 @@ class QueryResult implements QueryResultInterface {
      * @param mixed|null $result [optional]. Default: null.
      * @param \Exception|null $exception [optional]. Default: null.
      */
-    function __construct($request, $result = null, $exception = null)
+    function __construct($request, $result = null, \Exception $exception = null)
     {
         $this->exception = $exception;
         $this->request = $request;
@@ -64,19 +65,18 @@ class QueryResult implements QueryResultInterface {
     }
 
     /**
-     * @param null|mixed $result
-     */
-    public function setResult($result)
-    {
-        $this->result = $result;
-    }
-
-
-    /**
      * @return mixed
      */
     public function getResult()
     {
         return $this->result;
+    }
+
+    /**
+     * @param null|mixed $result
+     */
+    public function setResult($result)
+    {
+        $this->result = $result;
     }
 }

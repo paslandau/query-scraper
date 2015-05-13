@@ -4,11 +4,13 @@ namespace paslandau\QueryScraper;
 
 
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Cookie\CookieJar;
 use GuzzleHttp\Event\AbstractTransferEvent;
 use GuzzleHttp\Event\EndEvent;
 use GuzzleHttp\Event\ErrorEvent;
 use GuzzleHttp\Message\RequestInterface;
 use GuzzleHttp\Pool;
+use GuzzleHttp\Subscriber\Cookie;
 use paslandau\GuzzleRotatingProxySubscriber\Exceptions\NoProxiesLeftException;
 use paslandau\GuzzleRotatingProxySubscriber\Proxy\RotatingProxyInterface;
 use paslandau\QueryScraper\Exceptions\QueryScraperException;
@@ -50,6 +52,10 @@ class Scraper
      */
     private $requestGenerator;
 
+    private $blocked = 0;
+
+    private $done = 0;
+
     /**
      * @param ClientInterface $client
      * @param int $parallel . [optional]. Default: 5.
@@ -82,13 +88,14 @@ class Scraper
         // prepare requests
         $requests = [];
         foreach ($queryRequests as $key => $queryRequest) {
-            $req = $this->createRequest($queryRequest,$key);
+            $req = $this->createRequest($queryRequest, $key);
             $requests[$key] = $req;
             $this->requestGenerator->append($req);
             $result[$key] = new Result($queryRequest, null, new QueryScraperException("Request has not been executed!"));
         }
 
         $end = $this->getOnEnd($result, $queryRequests);
+        $this->getLogger()->debug("Start scraping with {$this->parallel} parallel requests");
 
         $pool = new Pool($this->client, $this->requestGenerator,
             [
@@ -109,18 +116,6 @@ class Scraper
         $pool->wait();
 
         return $result;
-    }
-
-    /**
-     * @param QueryRequestInterface $queryRequest
-     * @param int $key
-     * @return RequestInterface
-     */
-    private function createRequest(QueryRequestInterface $queryRequest, $key){
-        $req = $queryRequest->createRequest($this->client);
-        $req->getConfig()->set(self::GUZZLE_REQUEST_ID_KEY, $key);
-        $req->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, 0);
-        return $req;
     }
 
     /**
@@ -147,7 +142,23 @@ class Scraper
             if ($queryResult instanceof ProxyFeedbackInterface) {
                 $proxyResult = $queryResult->getProxyResult();
                 $this->getLogger()->debug("[Request: $requestId] Proxy-Feedback for {$request->getConfig()->get("proxy")} {$request->getUrl()}: {$proxyResult}");
-                $request->getConfig()->set(RotatingProxyInterface::GUZZLE_CONFIG_KEY_REQUEST_RESULT,$proxyResult);
+                if($proxyResult == "blocked") {
+                    $this->blocked++;
+                }
+                $this->getLogger()->debug("Blocked: {$this->blocked}");
+//                $emitter = $request->getEmitter();
+//                foreach ($emitter->listeners("complete") as $listener) {
+//                    if (is_array($listener) && $listener[0] instanceof Cookie) {
+//                        /**
+//                         * @var CookieJar $jar
+//                         */
+//                        $jar = $listener[0]->getCookieJar();
+//                        foreach($jar as $cookie){
+//                            $this->getLogger()->debug("Cookie: {$cookie->getName()} = {$cookie->getValue()}");
+//                        }
+//                    }
+//                }
+                $request->getConfig()->set(RotatingProxyInterface::GUZZLE_CONFIG_KEY_REQUEST_RESULT, $proxyResult);
             }
 
             //retry
@@ -158,7 +169,7 @@ class Scraper
                 // This becomes a problem when we're dealing with redirects, e.g. while Google SERP scraping.
                 // Google will redirect to a https://ipv4.google.com/sorry/IndexRedirect... page and the retry will retry that URL - which makes no sense
                 // To solve this, we re-generate the original request
-                $req = $this->createRequest($queryRequest,$requestId);
+                $req = $this->createRequest($queryRequest, $requestId);
                 if ($curRetries < $this->maxRetries) {
                     $this->getLogger()->debug("[Request: $requestId] Retrying {$req->getUrl()}... ({$curRetries}/{$this->maxRetries})");
                     $curRetries++;
@@ -168,6 +179,8 @@ class Scraper
                 }
                 $this->getLogger()->debug("Giving up on {$req->getUrl()} after {$curRetries} retries");
             }
+            $this->done++;
+            $this->getLogger()->debug("Scraped {$this->done} or ".count($queryRequests));
             $result[$requestId] = $queryResult;
         };
         return $end;
@@ -187,5 +200,18 @@ class Scraper
     public function getClient()
     {
         return $this->client;
+    }
+
+    /**
+     * @param QueryRequestInterface $queryRequest
+     * @param int $key
+     * @return RequestInterface
+     */
+    private function createRequest(QueryRequestInterface $queryRequest, $key)
+    {
+        $req = $queryRequest->createRequest($this->client);
+        $req->getConfig()->set(self::GUZZLE_REQUEST_ID_KEY, $key);
+        $req->getConfig()->set(self::GUZZLE_REQUEST_RETRIES, 0);
+        return $req;
     }
 }

@@ -1,7 +1,13 @@
 #query-scraper
+<!---
 [![Build Status](https://travis-ci.org/paslandau/query-scraper.svg?branch=master)](https://travis-ci.org/paslandau/query-scraper)
+-->
 
-Scraping!
+#WORK IN PROGRESS!
+
+- personal backup
+- no unit tests
+- use at your own risk
 
 ##Description
 
@@ -10,7 +16,7 @@ Coming soon...
 ##Requirements
 
 - PHP >= 5.5
-- Guzzle >= 5.0.3
+- Guzzle >= 5.3.0
 
 ##Installation
 

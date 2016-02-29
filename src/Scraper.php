@@ -180,7 +180,7 @@ class Scraper
                 $this->getLogger()->debug("Giving up on {$req->getUrl()} after {$curRetries} retries");
             }
             $this->done++;
-            $this->getLogger()->debug("Scraped {$this->done} or ".count($queryRequests));
+            $this->getLogger()->debug("Scraped {$this->done} of ".count($queryRequests));
             $result[$requestId] = $queryResult;
         };
         return $end;

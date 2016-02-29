@@ -33,5 +33,8 @@
         "paslandau/guzzle-rotating-proxy-subscriber": "dev-master",
         "paslandau/guzzle-application-cache-subscriber": "dev-master",
         "paslandau/guzzle-auto-charset-encoding-subscriber": "dev-master"
+    },
+    "config": {
+        "secure-http": false
     }
 }
